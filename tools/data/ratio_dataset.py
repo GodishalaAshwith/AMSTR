@@ -11,6 +11,21 @@ from torch.utils.data import Dataset
 from openrec.preprocess import create_operators, transform
 
 
+_ENV_CACHE = {}
+
+
+def _get_lmdb_env(dirpath):
+    norm_path = os.path.abspath(dirpath)
+    if norm_path not in _ENV_CACHE:
+        _ENV_CACHE[norm_path] = lmdb.open(dirpath,
+                                          max_readers=32,
+                                          readonly=True,
+                                          lock=False,
+                                          readahead=False,
+                                          meminit=False)
+    return _ENV_CACHE[norm_path]
+
+
 class RatioDataSet(Dataset):
 
     def __init__(self, config, mode, logger, seed=None, epoch=1, task='rec'):
@@ -84,12 +99,7 @@ class RatioDataSet(Dataset):
         lmdb_sets = {}
         dataset_idx = 0
         for dirpath, ratio in zip(data_dir_list, ratio_list):
-            env = lmdb.open(dirpath,
-                            max_readers=32,
-                            readonly=True,
-                            lock=False,
-                            readahead=False,
-                            meminit=False)
+            env = _get_lmdb_env(dirpath)
             txn = env.begin(write=False)
             num_samples = int(txn.get('num-samples'.encode()))
             lmdb_sets[dataset_idx] = {
