@@ -15,9 +15,18 @@
 
 from functools import partial
 
-import imgaug.augmenters as iaa
 import numpy as np
 from PIL import Image, ImageFilter
+
+# NumPy 2.0+ compatibility shim
+if not hasattr(np, 'sctypes'):
+    np.sctypes = {
+        'int': [np.int8, np.int16, np.int32, np.int64],
+        'uint': [np.uint8, np.uint16, np.uint32, np.uint64],
+        'float': [getattr(np, t) for t in ['float16', 'float32', 'float64', 'longdouble'] if hasattr(np, t)],
+        'complex': [getattr(np, t) for t in ['complex64', 'complex128', 'clongdouble'] if hasattr(np, t)],
+        'others': [bool, object, bytes, str, np.void]
+    }
 
 from openrec.preprocess import auto_augment
 from openrec.preprocess.auto_augment import _LEVEL_DENOM, LEVEL_TO_ARG, NAME_TO_OP, _randomly_negate, rotate
@@ -82,23 +91,27 @@ def gaussian_blur(img, radius, **__):
 
 def motion_blur(img, k, **__):
     k = _get_param(k, img, 0.08, 3) | 1  # bin to odd values
-    key = 'motion_blur_' + str(k)
-    op = _get_op(key, lambda: iaa.MotionBlur(k))
-    return Image.fromarray(op(image=np.asarray(img)))
+    kernel = [0.0] * (k * k)
+    mid = k // 2
+    for j in range(k):
+        kernel[mid * k + j] = 1.0 / k
+    return img.filter(ImageFilter.Kernel((k, k), kernel))
 
 
 def gaussian_noise(img, scale, **_):
     scale = _get_param(scale, img, 0.25) | 1  # bin to odd values
-    key = 'gaussian_noise_' + str(scale)
-    op = _get_op(key, lambda: iaa.AdditiveGaussianNoise(scale=scale))
-    return Image.fromarray(op(image=np.asarray(img)))
+    arr = np.asarray(img, dtype=np.float32)
+    noise = np.random.normal(0, float(scale), arr.shape).astype(np.float32)
+    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr)
 
 
 def poisson_noise(img, lam, **_):
     lam = _get_param(lam, img, 0.2) | 1  # bin to odd values
-    key = 'poisson_noise_' + str(lam)
-    op = _get_op(key, lambda: iaa.AdditivePoissonNoise(lam))
-    return Image.fromarray(op(image=np.asarray(img)))
+    arr = np.asarray(img, dtype=np.float32)
+    noise = (np.random.poisson(float(lam), arr.shape).astype(np.float32) - float(lam))
+    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr)
 
 
 def _level_to_arg(level, _hparams, max):
