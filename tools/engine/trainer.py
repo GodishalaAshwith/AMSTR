@@ -130,7 +130,7 @@ class Trainer(object):
 
         # amp
         self.scaler = (torch.cuda.amp.GradScaler() if self.cfg['Global'].get(
-            'use_amp', False) else None)
+            'use_amp', False) and self.device.type == 'cuda' else None)
 
         self.logger.info(
             f'run with torch {torch.__version__} and device {self.device}')
@@ -185,6 +185,8 @@ class Trainer(object):
     def set_device(self, device):
         if device == 'gpu' and torch.cuda.is_available():
             device = torch.device(f'cuda:{self.local_rank}')
+        elif device in ['gpu', 'mps'] and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device('mps')
         else:
             device = torch.device('cpu')
         self.device = device
