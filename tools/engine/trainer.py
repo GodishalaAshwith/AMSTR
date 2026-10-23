@@ -268,23 +268,37 @@ class Trainer(object):
                         preds = self.model(batch_tensor[0],
                                            data=batch_tensor[1:])
                         loss = self.loss_class(preds, batch_tensor)
-                    self.scaler.scale(loss['loss']).backward()
-                    if self.grad_clip_val > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(),
-                            max_norm=self.grad_clip_val)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    total_l = loss['loss']
+                    if not torch.isnan(total_l) and not torch.isinf(total_l):
+                        self.scaler.scale(total_l).backward()
+                        if self.grad_clip_val > 0:
+                            self.scaler.unscale_(self.optimizer)
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(),
+                                max_norm=self.grad_clip_val)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        self.logger.warning(
+                            f"NaN or Inf loss encountered at step {global_step}! Skipping optimizer step to protect weights."
+                        )
+                        self.optimizer.zero_grad()
                 else:
                     preds = self.model(batch_tensor[0], data=batch_tensor[1:])
                     loss = self.loss_class(preds, batch_tensor)
                     avg_loss = loss['loss']
-                    avg_loss.backward()
-                    if self.grad_clip_val > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(),
-                            max_norm=self.grad_clip_val)
-                    self.optimizer.step()
+                    if not torch.isnan(avg_loss) and not torch.isinf(avg_loss):
+                        avg_loss.backward()
+                        if self.grad_clip_val > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                self.model.parameters(),
+                                max_norm=self.grad_clip_val)
+                        self.optimizer.step()
+                    else:
+                        self.logger.warning(
+                            f"NaN or Inf loss encountered at step {global_step}! Skipping optimizer step to protect weights."
+                        )
+                        self.optimizer.zero_grad()
 
                 if cal_metric_during_train:  # only rec and cls need
                     post_result = self.post_process_class(preds,

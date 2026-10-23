@@ -17,6 +17,7 @@ Global:
   use_space_char: &use_space_char False
   save_res_path: ./output/rec/predicts_svtrv2x_tiny_union14m.txt
   use_amp: True
+  grad_clip_val: 5.0
 
 Optimizer:
   name: AdamW
@@ -161,3 +162,4 @@ Eval:
     batch_size_per_card: *bs
     max_ratio: *max_ratio
     num_workers: 2
+

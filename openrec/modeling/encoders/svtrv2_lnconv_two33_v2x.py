@@ -103,9 +103,9 @@ class SparseMoEMLP(nn.Module):
         x_flat = x.view(-1, orig_shape[-1])  # (M, C) where M = B * T
         M, C = x_flat.shape
 
-        # Gating logits & probabilities: g = softmax(W_g x + b_g)
+        # Gating logits & probabilities: g = softmax(W_g x + b_g) in fp32 for numerical stability
         gate_logits = self.gate(x_flat)  # (M, num_experts)
-        gate_probs = F.softmax(gate_logits, dim=-1)  # (M, num_experts)
+        gate_probs = F.softmax(gate_logits.float(), dim=-1).type_as(gate_logits)
 
         # Top-1 routing (or top-K)
         top_weights, top_indices = torch.topk(gate_probs, self.topk, dim=-1)  # (M, K)

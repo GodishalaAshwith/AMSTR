@@ -57,19 +57,34 @@ def load_ckpt(model, cfg, optimizer=None, lr_scheduler=None, logger=None):
     checkpoints = cfg["Global"].get("checkpoints")
     pretrained_model = cfg["Global"].get("pretrained_model")
 
+    # Auto-resolve .pth extension if omitted
+    if checkpoints and not os.path.exists(checkpoints):
+        if os.path.exists(checkpoints + ".pth"):
+            checkpoints = checkpoints + ".pth"
+
     status = {}
-    if checkpoints and os.path.exists(checkpoints):
+    if checkpoints:
+        if not os.path.exists(checkpoints):
+            logger.warning(
+                f"Checkpoint file not found: {checkpoints}. "
+                "Ensure Google Drive is mounted (`from google.colab import drive; drive.mount('/content/drive')`) "
+                "and verify the file path!"
+            )
+            logger.info("train from scratch")
+            return status
+
         checkpoint = torch.load(checkpoints, map_location=torch.device("cpu"))
         model.load_state_dict(checkpoint["state_dict"], strict=True)
-        if optimizer is not None:
+        if optimizer is not None and "optimizer" in checkpoint and checkpoint["optimizer"] is not None:
             optimizer.load_state_dict(checkpoint["optimizer"])
-        if lr_scheduler is not None:
+        if lr_scheduler is not None and "scheduler" in checkpoint and checkpoint["scheduler"] is not None:
             lr_scheduler.load_state_dict(checkpoint["scheduler"])
-        logger.info(f"resume from checkpoint {checkpoints} (epoch {checkpoint['epoch']})")
+        logger.info(f"resume from checkpoint {checkpoints} (epoch {checkpoint['epoch']}, step {checkpoint.get('global_step', 0)})")
 
-        status["global_step"] = checkpoint["global_step"]
-        status["epoch"] = checkpoint["epoch"] + 1
-        status["metrics"] = checkpoint["metrics"]
+        status["global_step"] = checkpoint.get("global_step", 0)
+        status["epoch"] = checkpoint.get("epoch", 0) + 1
+        status["metrics"] = checkpoint.get("metrics", {})
+        return status
     elif pretrained_model and os.path.exists(pretrained_model):
         load_pretrained_params(model, pretrained_model, logger)
         logger.info(f"finetune from checkpoint {pretrained_model}")
