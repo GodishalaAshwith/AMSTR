@@ -51,12 +51,12 @@ def main():
     for k, v in metric.items():
         trainer.logger.info('{}:{}'.format(k, v))
 
-    output_dir = cfg['Global'].get('output_dir', None)
+    output_dir = trainer.cfg['Global'].get('output_dir', None)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
         res_file = os.path.join(output_dir, 'eval_results.txt')
         with open(res_file, 'w', encoding='utf-8') as f:
-            f.write(f"Checkpoint: {cfg['Global'].get('checkpoints')}\n")
+            f.write(f"Checkpoint: {trainer.cfg['Global'].get('checkpoints')}\n")
             f.write("--- Metrics ---\n")
             for k, v in metric.items():
                 f.write(f"{k}: {v}\n")
