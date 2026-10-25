@@ -38,8 +38,8 @@ def save_ckpt(
         "epoch": epoch,
         "global_step": global_step,
         "state_dict": state_dict,
-        "optimizer": None if is_best else optimizer.state_dict(),
-        "scheduler": None if is_best else lr_scheduler.state_dict(),
+        "optimizer": optimizer.state_dict() if optimizer is not None else None,
+        "scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
         "config": cfg,
         "metrics": metrics,
     }

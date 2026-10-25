@@ -616,7 +616,7 @@ class SMTRDecoder(nn.Module):
         label = torch.concat(
             [targets[2][:, :max_len_curr], targets[5][:, :max_len_curr_pre]],
             1)
-        loss1 = F.cross_entropy(answer1_pred.flatten(0, 1),
+        loss1 = F.cross_entropy(answer1_pred.float().flatten(0, 1),
                                 label.flatten(0, 1),
                                 ignore_index=self.ignore_index,
                                 reduction='mean')

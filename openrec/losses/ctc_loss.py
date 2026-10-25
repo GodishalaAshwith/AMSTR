@@ -4,7 +4,7 @@ from torch import nn
 
 class CTCLoss(nn.Module):
 
-    def __init__(self, use_focal_loss=False, zero_infinity=False, **kwargs):
+    def __init__(self, use_focal_loss=False, zero_infinity=True, **kwargs):
         super(CTCLoss, self).__init__()
         self.loss_func = nn.CTCLoss(blank=0,
                                     reduction='none',
@@ -12,15 +12,18 @@ class CTCLoss(nn.Module):
         self.use_focal_loss = use_focal_loss
 
     def forward(self, predicts, batch):
-        # predicts = predicts['res']
-
         batch_size = predicts.size(0)
         label, label_length = batch[1], batch[2]
-        predicts = predicts.log_softmax(2)
+        # Always run CTC log_softmax in fp32 to prevent half-precision underflow/overflow
+        predicts = predicts.float().log_softmax(2)
         predicts = predicts.permute(1, 0, 2)
         preds_lengths = torch.tensor([predicts.size(0)] * batch_size,
-                                     dtype=torch.long)
+                                     dtype=torch.long,
+                                     device=predicts.device)
         loss = self.loss_func(predicts, label, preds_lengths, label_length)
+
+        # Zero out any non-finite loss entries
+        loss = torch.where(torch.isfinite(loss), loss, torch.zeros_like(loss))
 
         if self.use_focal_loss:
             # Use torch.clamp to limit the range of loss, avoiding overflow in exponential calculation

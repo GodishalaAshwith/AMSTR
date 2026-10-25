@@ -19,13 +19,15 @@ DATASET_MODULES = {
     'RatioDataSet': 'tools.data.ratio_dataset',
     'RatioDataSetTest': 'tools.data.ratio_dataset_test',
     'RatioDataSetTVResize': 'tools.data.ratio_dataset_tvresize',
-    'RatioDataSetTVResizeTest': 'tools.data.ratio_dataset_tvresize_test'
+    'RatioDataSetTVResizeTest': 'tools.data.ratio_dataset_tvresize_test',
+    'MixedScriptRatioDataSet': 'tools.data.mixed_script_dataset',
 }
 
 # 定义支持的 Sampler 类及其对应的模块路径
 SAMPLER_MODULES = {
     'MultiScaleSampler': 'tools.data.multi_scale_sampler',
-    'RatioSampler': 'tools.data.ratio_sampler'
+    'RatioSampler': 'tools.data.ratio_sampler',
+    'MixedScriptRatioSampler': 'tools.data.mixed_script_dataset',
 }
 
 __all__ = [

@@ -269,33 +269,65 @@ class Trainer(object):
                             enabled=self.device.type == 'cuda'):
                         preds = self.model(batch_tensor[0],
                                            data=batch_tensor[1:])
-                        loss = self.loss_class(preds, batch_tensor)
+                    # Compute loss in fp32 outside autocast to prevent half-precision underflow/overflow
+                    with torch.cuda.amp.autocast(enabled=False):
+                        preds_f32 = {}
+                        if isinstance(preds, dict):
+                            for k, v in preds.items():
+                                if isinstance(v, torch.Tensor):
+                                    preds_f32[k] = v.float()
+                                elif isinstance(v, (list, tuple)):
+                                    preds_f32[k] = [item.float() if isinstance(item, torch.Tensor) else item for item in v]
+                                else:
+                                    preds_f32[k] = v
+                        else:
+                            preds_f32 = preds
+                        loss = self.loss_class(preds_f32, batch_tensor)
                     total_l = loss['loss']
                     if not torch.isnan(total_l) and not torch.isinf(total_l):
                         self.scaler.scale(total_l).backward()
+                        self.scaler.unscale_(self.optimizer)
+                        
+                        grad_norm = torch.tensor(0.0)
                         if self.grad_clip_val > 0:
-                            self.scaler.unscale_(self.optimizer)
-                            torch.nn.utils.clip_grad_norm_(
+                            grad_norm = torch.nn.utils.clip_grad_norm_(
                                 self.model.parameters(),
                                 max_norm=self.grad_clip_val)
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
+                        
+                        # Protect against gradient overflow turning into NaNs during clip_grad_norm_
+                        if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                            self.logger.warning(
+                                f"Gradient overflow/inf encountered at step {global_step} (norm={grad_norm})! Skipping optimizer step to protect weights."
+                            )
+                            self.optimizer.zero_grad()
+                            self.scaler.update()
+                        else:
+                            self.scaler.step(self.optimizer)
+                            self.scaler.update()
                     else:
                         self.logger.warning(
                             f"NaN or Inf loss encountered at step {global_step}! Skipping optimizer step to protect weights."
                         )
                         self.optimizer.zero_grad()
+                        self.scaler.update()
                 else:
                     preds = self.model(batch_tensor[0], data=batch_tensor[1:])
                     loss = self.loss_class(preds, batch_tensor)
                     avg_loss = loss['loss']
                     if not torch.isnan(avg_loss) and not torch.isinf(avg_loss):
                         avg_loss.backward()
+                        grad_norm = torch.tensor(0.0)
                         if self.grad_clip_val > 0:
-                            torch.nn.utils.clip_grad_norm_(
+                            grad_norm = torch.nn.utils.clip_grad_norm_(
                                 self.model.parameters(),
                                 max_norm=self.grad_clip_val)
-                        self.optimizer.step()
+                        if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                            self.logger.warning(
+                                f"Gradient overflow/inf encountered at step {global_step} (norm={grad_norm})! Skipping optimizer step."
+                            )
+                            self.optimizer.zero_grad()
+                        else:
+                            self.optimizer.step()
                     else:
                         self.logger.warning(
                             f"NaN or Inf loss encountered at step {global_step}! Skipping optimizer step to protect weights."
@@ -356,6 +388,16 @@ class Trainer(object):
                 if (global_step > start_eval_step and
                     (global_step - start_eval_step) % eval_batch_step == 0) and self.local_rank == 0:
                     self.eval_step(global_step, epoch)
+                    # Automatically checkpoint latest state every eval_batch_step so progress is never lost
+                    save_ckpt(self.model,
+                              self.cfg,
+                              self.optimizer,
+                              self.lr_scheduler,
+                              epoch,
+                              global_step,
+                              self.best_metric,
+                              is_best=False,
+                              prefix=None)
 
             # eval epoch step
             if self.local_rank == 0 and epoch > start_eval_epoch and (
