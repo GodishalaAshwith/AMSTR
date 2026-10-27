@@ -17,7 +17,8 @@ class SmoothedValue(object):
         self.deque.append(value)
 
     def get_median_value(self):
-        return np.median(self.deque)
+        valid = [x for x in self.deque if x is not None and not np.isnan(x) and not np.isinf(x)]
+        return np.median(valid) if len(valid) > 0 else float('nan')
 
 
 def Time():
