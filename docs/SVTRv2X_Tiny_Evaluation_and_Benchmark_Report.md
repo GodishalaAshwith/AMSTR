@@ -101,3 +101,4 @@ Below is the side-by-side comparison of 30 representative test samples from the 
 
 ### 3. Production-Grade Speed
 * At **268.90 FPS** (3.72 ms per image), SVTRv2X Tiny operates comfortably within real-time constraints, proving that the combination of local depthwise convolutions, windowed attention, and top-1 MoE routing introduces negligible runtime overhead over standard CNN backbones while dramatically expanding representational capacity.
+
