@@ -309,7 +309,11 @@ class Trainer(object):
                             f"NaN or Inf loss encountered at step {global_step}! Skipping optimizer step to protect weights."
                         )
                         self.optimizer.zero_grad()
-                        self.scaler.update()
+                        try:
+                            if hasattr(self.scaler, '_scale') and self.scaler._scale is not None:
+                                self.scaler._scale.mul_(0.5)
+                        except Exception:
+                            pass
                 else:
                     preds = self.model(batch_tensor[0], data=batch_tensor[1:])
                     loss = self.loss_class(preds, batch_tensor)
