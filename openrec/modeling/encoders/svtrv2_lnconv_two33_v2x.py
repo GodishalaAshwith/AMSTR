@@ -397,6 +397,162 @@ class ADDPosEmbed(nn.Module):
         return x
 
 
+# ==============================================================================
+# Tier 1 Architecture Injection: SE-Augmented Residual Stem & 2D Pos Embed
+# ==============================================================================
+
+class SqueezeAndExcitation(nn.Module):
+    """
+    Squeeze-and-Excitation (SE) Block:
+    Global Average Pooling -> Linear(D -> D//r) -> ReLU -> Linear(D//r -> D) -> Sigmoid
+    Dynamically weights feature channels to emphasize fine diacritic strokes and
+    suppress background noise.
+    """
+    def __init__(self, channels, reduction=4):
+        super().__init__()
+        mid_channels = max(1, channels // reduction)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, mid_channels, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_channels, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        # x: (B, C, H, W)
+        B, C, _, _ = x.shape
+        w = self.avg_pool(x).view(B, C)
+        w = self.fc(w).view(B, C, 1, 1)
+        return x * w
+
+
+class ConvResidualBlock(nn.Module):
+    """
+    3x3 Convolutional Residual Block:
+    Conv3x3 -> BN -> GELU -> Conv3x3 -> BN + Identity shortcut -> GELU
+    Deepens receptive fields to preserve high-frequency sub-glyph details.
+    """
+    def __init__(self, dim):
+        super().__init__()
+        self.conv1 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(dim)
+        self.act1 = nn.GELU()
+        self.conv2 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(dim)
+        self.act2 = nn.GELU()
+
+    def forward(self, x):
+        residual = x
+        out = self.act1(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = self.act2(out + residual)
+        return out
+
+
+class Learnable2DPosEmbed(nn.Module):
+    """
+    2D Learnable Positional Embedding:
+    Initialized as a learnable parameter matrix of size [1, H_max, W_max, D].
+    Added to patch embeddings before flattening for the transformer sequence to preserve
+    explicit row-and-column coordinate layouts.
+    Supports dynamic slicing and bicubic interpolation fallback for dynamic text lengths.
+    """
+    def __init__(self, feat_max_size=[8, 64], embed_dim=64):
+        super().__init__()
+        self.feat_max_size = feat_max_size
+        self.embed_dim = embed_dim
+        # Shape: [1, H_max, W_max, D]
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, feat_max_size[0], feat_max_size[1], embed_dim)
+        )
+        trunc_normal_(self.pos_embed, mean=0.0, std=0.02)
+
+    def forward(self, x_2d):
+        """
+        x_2d: (B, H, W, D) where D == embed_dim
+        """
+        B, H, W, D = x_2d.shape
+        if H <= self.pos_embed.shape[1] and W <= self.pos_embed.shape[2]:
+            pe = self.pos_embed[:, :H, :W, :]
+        else:
+            # Fallback dynamic bicubic interpolation if input dimensions exceed feat_max_size
+            pe = self.pos_embed.permute(0, 3, 1, 2)  # [1, D, H_max, W_max]
+            pe = F.interpolate(pe, size=(H, W), mode='bicubic', align_corners=False)
+            pe = pe.permute(0, 2, 3, 1)  # [1, H, W, D]
+        return x_2d + pe
+
+
+class SEAugmentedStem(nn.Module):
+    """
+    Tier 1 SE-Augmented Residual Stem with 2D Positional Embeddings:
+    1. Patch downsampling (two stride-2 convs: 3 -> D//2 -> D, 4x downsample)
+    2. Two 3x3 ConvResidualBlocks
+    3. Squeeze-and-Excitation (SE) channel modulation
+    4. 2D Learnable Positional Embedding [1, H', W', D]
+    5. Optional sequence flattening for transformer blocks
+    """
+    def __init__(
+        self,
+        in_channels=3,
+        feat_max_size=[8, 64],
+        embed_dim=64,
+        use_2d_pos_embed=True,
+        se_reduction=4,
+        flatten=False,
+        bias=False,
+    ):
+        super().__init__()
+        self.flatten = flatten
+        self.use_2d_pos_embed = use_2d_pos_embed
+
+        # Initial 4x patch downsample
+        self.downsample_convs = nn.Sequential(
+            ConvBNLayer(in_channels, embed_dim // 2, 3, 2, 1, bias=bias, act=nn.GELU),
+            ConvBNLayer(embed_dim // 2, embed_dim, 3, 2, 1, bias=bias, act=nn.GELU),
+        )
+        # Two 3x3 residual blocks
+        self.res_block1 = ConvResidualBlock(embed_dim)
+        self.res_block2 = ConvResidualBlock(embed_dim)
+        # SE channel weighting
+        self.se = SqueezeAndExcitation(embed_dim, reduction=se_reduction)
+
+        # 2D Positional Embeddings
+        if use_2d_pos_embed:
+            self.pos_embed_2d = Learnable2DPosEmbed(feat_max_size, embed_dim)
+        else:
+            self.pos_embed_2d = None
+
+    def forward(self, x):
+        sz = x.shape[2:]
+        H_prime, W_prime = sz[0] // 4, sz[1] // 4
+
+        # 1. Downsampling convs: [B, 3, H, W] -> [B, D, H/4, W/4]
+        x = self.downsample_convs(x)
+        # 2. Two 3x3 Conv residual blocks
+        x = self.res_block1(x)
+        x = self.res_block2(x)
+        # 3. Squeeze-and-Excitation channel gating
+        x = self.se(x)
+
+        # 4. 2D Positional Embeddings
+        if self.pos_embed_2d is not None:
+            # Permute to [B, H', W', D] to add 2D coordinates
+            x_2d = x.permute(0, 2, 3, 1)
+            x_2d = self.pos_embed_2d(x_2d)
+            if self.flatten:
+                # Flatten [B, H'*W', D] for transformer sequence
+                x = x_2d.flatten(1, 2)
+            else:
+                # Permute back to [B, D, H', W']
+                x = x_2d.permute(0, 3, 1, 2)
+        else:
+            if self.flatten:
+                x = x.flatten(2).transpose(1, 2)
+
+        return x, [H_prime, W_prime]
+
+
 class POPatchEmbed(nn.Module):
     def __init__(self, in_channels=3, feat_max_size=[8, 32], embed_dim=768,
                  use_pos_embed=False, flatten=False, bias=False):
@@ -567,6 +723,10 @@ class SVTRv2XEncoder(nn.Module):
         num_convs=[[2] * 3, [2] * 3 + [3] * 3, [3] * 3],
         kernel_sizes=[[3] * 3, [3] * 3 + [3] * 3, [3] * 3],
         pope_bias=False,
+        # >>> Tier 1 Options (Run 2)
+        use_se_stem=False,
+        use_2d_pos_embed=False,
+        se_reduction=4,
         # >>> JM Options
         use_jumble=True,
         jumble_patch_size=4,
@@ -585,6 +745,8 @@ class SVTRv2XEncoder(nn.Module):
         self.num_features = dims[-1]
         self.use_self_distill = use_self_distill
         self.use_moe = use_moe
+        self.use_se_stem = use_se_stem
+        self.use_2d_pos_embed = use_2d_pos_embed
 
         # 1. Jumble Module
         self.use_jumble = use_jumble
@@ -594,15 +756,26 @@ class SVTRv2XEncoder(nn.Module):
             self.jumble = nn.Identity()
 
         # Patch Embedding
-        feat_max_size = [max_sz[0] // 4, max_sz[1] // 4]
-        self.pope = POPatchEmbed(
-            in_channels=in_channels,
-            feat_max_size=feat_max_size,
-            embed_dim=dims[0],
-            use_pos_embed=use_pos_embed,
-            flatten=mixer[0][0] != 'Conv',
-            bias=pope_bias,
-        )
+        feat_max_size = [max_sz[0] // 4, max(64, max_sz[1] // 4)]
+        if use_se_stem:
+            self.pope = SEAugmentedStem(
+                in_channels=in_channels,
+                feat_max_size=feat_max_size,
+                embed_dim=dims[0],
+                use_2d_pos_embed=use_2d_pos_embed,
+                se_reduction=se_reduction,
+                flatten=mixer[0][0] != 'Conv',
+                bias=pope_bias,
+            )
+        else:
+            self.pope = POPatchEmbed(
+                in_channels=in_channels,
+                feat_max_size=[max_sz[0] // 4, max_sz[1] // 4],
+                embed_dim=dims[0],
+                use_pos_embed=use_pos_embed,
+                flatten=mixer[0][0] != 'Conv',
+                bias=pope_bias,
+            )
 
         dpr = np.linspace(0, drop_path_rate, sum(depths))
 
@@ -673,7 +846,7 @@ class SVTRv2XEncoder(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'patch_embed', 'downsample', 'pos_embed'}
+        return {'patch_embed', 'downsample', 'pos_embed', 'pos_embed_2d'}
 
     def get_moe_load_loss(self):
         """Aggregate auxiliary load balancing loss across all MoE blocks."""
@@ -777,4 +950,14 @@ class SVTRv2LNConvTwo33JMSD(SVTRv2XEncoder):
         kwargs.setdefault('use_moe', False)
         kwargs.setdefault('use_self_distill', True)
         super().__init__(**kwargs)
+
+
+class SVTRv2X_Tier1(SVTRv2XEncoder):
+    """Run 2: Tier 1 Architecture Injection (SE-Augmented Stem + 2D Positional Embeddings)"""
+    def __init__(self, **kwargs):
+        kwargs.setdefault('use_se_stem', True)
+        kwargs.setdefault('use_2d_pos_embed', True)
+        kwargs.setdefault('se_reduction', 4)
+        super().__init__(**kwargs)
+
 

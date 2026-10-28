@@ -31,6 +31,7 @@ name_to_module = {
     'SVTRv2LNConvTwo33JMSD': '.svtrv2_lnconv_two33_v2x',
     'SVTRv2LNConvTwo33JMSDMoE': '.svtrv2_lnconv_two33_v2x',
     'SVTRv2XEncoder': '.svtrv2_lnconv_two33_v2x',
+    'SVTRv2X_Tier1': '.svtrv2_lnconv_two33_v2x',
 }
 
 

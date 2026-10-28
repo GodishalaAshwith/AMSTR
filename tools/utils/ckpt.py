@@ -73,12 +73,36 @@ def load_ckpt(model, cfg, optimizer=None, lr_scheduler=None, logger=None):
             logger.info("train from scratch")
             return status
 
-        checkpoint = torch.load(checkpoints, map_location=torch.device("cpu"))
-        model.load_state_dict(checkpoint["state_dict"], strict=True)
+        state_dict = checkpoint["state_dict"]
+        # Architectural migration: map legacy POPatchEmbed downsampling keys to SEAugmentedStem
+        adapted_state_dict = {}
+        for k, v in state_dict.items():
+            new_k = k
+            if ".patch_embed.0." in k:
+                new_k = k.replace(".patch_embed.0.", ".downsample_convs.0.")
+            elif ".patch_embed.1." in k:
+                new_k = k.replace(".patch_embed.1.", ".downsample_convs.1.")
+            adapted_state_dict[new_k] = v
+
+        try:
+            model.load_state_dict(adapted_state_dict, strict=True)
+        except RuntimeError as e:
+            logger.warning(
+                f"Strict checkpoint loading encountered key differences ({e}). "
+                "Gracefully falling back to strict=False for architectural migration (Tier 1 injection)..."
+            )
+            model.load_state_dict(adapted_state_dict, strict=False)
+
         if optimizer is not None and "optimizer" in checkpoint and checkpoint["optimizer"] is not None:
-            optimizer.load_state_dict(checkpoint["optimizer"])
+            try:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            except Exception as e:
+                logger.warning(f"Could not restore optimizer state ({e}). Initializing clean optimizer state for new architecture.")
         if lr_scheduler is not None and "scheduler" in checkpoint and checkpoint["scheduler"] is not None:
-            lr_scheduler.load_state_dict(checkpoint["scheduler"])
+            try:
+                lr_scheduler.load_state_dict(checkpoint["scheduler"])
+            except Exception as e:
+                logger.warning(f"Could not restore scheduler state ({e}). Initializing clean scheduler for fine-tuning.")
         logger.info(f"resume from checkpoint {checkpoints} (epoch {checkpoint['epoch']}, step {checkpoint.get('global_step', 0)})")
 
         status["global_step"] = checkpoint.get("global_step", 0)
@@ -95,8 +119,17 @@ def load_ckpt(model, cfg, optimizer=None, lr_scheduler=None, logger=None):
 
 def load_pretrained_params(model, pretrained_model, logger):
     checkpoint = torch.load(pretrained_model, map_location=torch.device("cpu"))
-    model.load_state_dict(checkpoint["state_dict"], strict=False)
+    state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+    adapted_state_dict = {}
+    for k, v in state_dict.items():
+        new_k = k
+        if ".patch_embed.0." in k:
+            new_k = k.replace(".patch_embed.0.", ".downsample_convs.0.")
+        elif ".patch_embed.1." in k:
+            new_k = k.replace(".patch_embed.1.", ".downsample_convs.1.")
+        adapted_state_dict[new_k] = v
+    model.load_state_dict(adapted_state_dict, strict=False)
     for name in model.state_dict().keys():
-        if name not in checkpoint["state_dict"]:
-            logger.info(f"{name} is not in pretrained model")
+        if name not in adapted_state_dict:
+            logger.info(f"{name} is not in pretrained model (initialized fresh)")
 

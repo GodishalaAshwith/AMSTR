@@ -1,4 +1,6 @@
-# Byte-compiled / optimized / DLL files
+benchmark_dataset/
+output.txt
+
 __pycache__/
 .ipynb_checkpoints/
 *.py[cod]
