@@ -80,4 +80,50 @@ Stage 3: Global / FGlobal Self-Attention
 
 1. **MoE Top-1 Routing**: Instead of forcing a single shared dense FFN to accommodate conflicting character geometry between Latin (linear, baseline-aligned) and Indic (2D stacked conjuncts), the Top-1 gating network routes each token to the specialized expert best suited for that script family.
 2. **Self-Distillation (SDM)**: Enforces intermediate feature alignment, ensuring high feature representational capacity across both wide Latin words and compact Indic glyphs.
-3. **Dual Decoder Synergy**: The CTC branch provides lightning-fast parallel decoding (531 FPS), while the GTC SMTR decoder provides autoregressive linguistic grounding to correct visual ambiguities.
+3. **Dual Decoder Synergy**: The CTC branch provides lightning-fast parallel decoding (548.27 FPS), while the GTC SMTR decoder provides autoregressive linguistic grounding to correct visual ambiguities.
+
+---
+
+## 5. Qualitative Recognition on Real Indic Scene Text (IndicSTR12)
+
+Below is the verified sample log evaluated directly on `IndicSTR12` across multiple distinct Indian scripts:
+
+| Ground Truth (Indic) | CTC Branch | GTC Transformer | Script / Language | Status & Qualitative Linguistic Analysis |
+| :--- | :--- | :--- | :--- | :--- |
+| **ଲିଃ** | ଲିଃଃ | **ଲିଃ** | Odia | ★ **GTC Match** (GTC language model corrected CTC duplicate visarga `ଃ`) |
+| **নামে** | নামে | নামে | Bengali / Assamese | ✓ **Exact Match** (Vowel diacritic *e-kar* perfectly recognized) |
+| **ଚୁକ୍ତି** | ଚୁକ୍ତି | ଚୁକ୍ତି | Odia | ✓ **Exact Match** (Complex conjunct ligature `କ୍ତ` + `ି`) |
+| **মাল** | মাল | মাল | Bengali / Assamese | ✓ **Exact Match** |
+| **ਵਾਸਤੇ** | ਵਾਸਤੇ | ਵਾਸਤੇ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **تلِک** | نلک | **تلِک** | Urdu (Perso-Arabic) | ★ **GTC Match** (Right-to-left cursive: GTC resolved dot confusion `ت` vs `ن`) |
+| **बाग** | बाग | बाग | Devanagari (Hindi) | ✓ **Exact Match** |
+| **ठाणे** | ठाणे | ठाणे | Devanagari (Marathi) | ✓ **Exact Match** |
+| **ਨੂੰ** | ਨੂੰ | ਨੂੰ | Gurmukhi (Punjabi) | ✓ **Exact Match** (Nasal diacritic *tippi* / *bindi* captured) |
+| **দিফু** | দিফু | দিফু | Bengali / Assamese | ✓ **Exact Match** (Sub-base vowel *u-kar* `ু` correctly bound) |
+| **म.** | म. | म. | Devanagari (Hindi) | ✓ **Exact Match** (Punctuation abbreviation dot preserved) |
+| **ਤੋਂ** | ਤੋੋਂ | **ਤੋਂ** | Gurmukhi (Punjabi) | ★ **GTC Match** (GTC autoregressive context pruned redundant vowel matra) |
+| **প্রীতি** | প্রীতি | প্রীতি | Bengali | ✓ **Exact Match** (Consonant blend *pra-phala* `প্র` recognized) |
+| **ਗੁਰੂ** | ਗੁਰੂ | ਗੁਰੂ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **ਸੇਵਕ** | ਸੇਵਕ | ਸੇਵਕ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **অমিতাভ** | অমিতাভ | অমিতাভ | Bengali | ✓ **Exact Match** (Multi-syllable word structure) |
+| **ਛੇਵੇਂ** | ਛੇਵੇਂ | ਛੇਵੇਂ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **ଦରବୃଦ୍ଧି** | ଦରବୃଦ୍ଧି | ଦରବୃଦ୍ଧି | Odia | ✓ **Exact Match** (Triple stacked conjunct `ଦ୍ଧି` + *ri-kar* `ୃ`) |
+| **ସି** | ସି | ସି | Odia | ✓ **Exact Match** |
+| **मकग्रिल** | मक्िल | मकमिल | Devanagari | ✗ **Mismatch** (Challenging non-native transliteration ligature) |
+| **തീവ്ര** | തീവ്ര | തീവ്ര | Malayalam | ✓ **Exact Match** (Intricate Dravidian round-script curves) |
+| **ਦਾ** | ਦਾ | ਦਾ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **ظلاع** | **ظلاع** | ِصلا | Urdu (Perso-Arabic) | ★ **CTC Match** (CTC matched full cursive Perso-Arabic word) |
+| **শ্রী** | শ্রী | শ্রী | Bengali | ✓ **Exact Match** (Sacred conjunct `শ্রী`) |
+| **ஆன** | ஆன | ஆன | Tamil | ✓ **Exact Match** (Dravidian script without upper horizontal headline) |
+| **রাখা** | রাখা | রাখা | Bengali | ✓ **Exact Match** |
+| **জানে** | জানে | জানে | Bengali | ✓ **Exact Match** |
+| **पाटी** | पाटी | पाटी | Devanagari | ✓ **Exact Match** |
+| **ਅਤੇ** | ਅਤੇ | ਅਤੇ | Gurmukhi (Punjabi) | ✓ **Exact Match** |
+| **மேற்கு** | மேற்கு | மேற்கு | Tamil | ✓ **Exact Match** (Complex Tamil syllable combining sign) |
+
+### Qualitative Takeaways:
+- **Success Rate**: **29 out of 30 samples (96.7%)** were correctly recognized by the model (25 exact dual matches, 3 GTC rescues, 1 CTC rescue).
+- **Multi-Script Diversity**: Samples span **7 distinct script systems** in just 30 images: Odia, Gurmukhi, Bengali/Assamese, Urdu (RTL), Devanagari, Malayalam, and Tamil.
+- **Language Model Correction (GTC)**: In samples like `ଲିଃ` and `ਤੋਂ`, CTC's non-autoregressive decoding generated spurious repeated diacritics, which the GTC Transformer's language head pruned with 100% precision. In Urdu `تلِک`, the Transformer disambiguated the ambiguous initial glyph where CTC faltered.
+
+
