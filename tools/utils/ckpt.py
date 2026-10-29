@@ -73,7 +73,8 @@ def load_ckpt(model, cfg, optimizer=None, lr_scheduler=None, logger=None):
             logger.info("train from scratch")
             return status
 
-        state_dict = checkpoint["state_dict"]
+        checkpoint = torch.load(checkpoints, map_location=torch.device("cpu"))
+        state_dict = checkpoint.get("state_dict", checkpoint)
         # Architectural migration: map legacy POPatchEmbed downsampling keys to SEAugmentedStem
         adapted_state_dict = {}
         for k, v in state_dict.items():
@@ -103,11 +104,13 @@ def load_ckpt(model, cfg, optimizer=None, lr_scheduler=None, logger=None):
                 lr_scheduler.load_state_dict(checkpoint["scheduler"])
             except Exception as e:
                 logger.warning(f"Could not restore scheduler state ({e}). Initializing clean scheduler for fine-tuning.")
-        logger.info(f"resume from checkpoint {checkpoints} (epoch {checkpoint['epoch']}, step {checkpoint.get('global_step', 0)})")
+        epoch_val = checkpoint.get('epoch', 1) if isinstance(checkpoint, dict) else 1
+        step_val = checkpoint.get('global_step', 0) if isinstance(checkpoint, dict) else 0
+        logger.info(f"resume from checkpoint {checkpoints} (epoch {epoch_val}, step {step_val})")
 
-        status["global_step"] = checkpoint.get("global_step", 0)
-        status["epoch"] = checkpoint.get("epoch", 1)
-        status["metrics"] = checkpoint.get("metrics", {})
+        status["global_step"] = step_val
+        status["epoch"] = epoch_val
+        status["metrics"] = checkpoint.get("metrics", {}) if isinstance(checkpoint, dict) else {}
         return status
     elif pretrained_model and os.path.exists(pretrained_model):
         load_pretrained_params(model, pretrained_model, logger)
